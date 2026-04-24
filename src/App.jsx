@@ -2,12 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, addDoc, getDocs, writeBatch, query, where } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, onSnapshot, addDoc, getDocs, writeBatch, query, where, deleteDoc } from 'firebase/firestore';
 
 // ==========================================
 // ⚠️ ATENÇÃO: CONFIGURAÇÃO DO SEU FIREBASE
-// Substitua os valores abaixo pelas credenciais do seu projeto Firebase
-// para que ele funcione corretamente no seu Netlify.
 // ==========================================
 let firebaseConfig = {
   apiKey: "AIzaSyBY6IHlAXE0YQme9spxrghEV-Jm4Lm9-T4",
@@ -19,23 +17,16 @@ let firebaseConfig = {
   measurementId: "G-JMHHB68SY0"
 };
 
-// Lógica de compatibilidade para rodar na nossa pré-visualização (Não apague)
 if (typeof __firebase_config !== 'undefined') {
   firebaseConfig = JSON.parse(__firebase_config);
 }
 
-// Inicialização do Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-
-// Inicializa o Analytics em segurança (se existir measurementId)
 const analytics = typeof window !== "undefined" && firebaseConfig.measurementId ? getAnalytics(app) : null;
-
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'sistema-evento-v1';
 
-// --- Helpers de Banco de Dados ---
-// Garante que o Netlify use as coleções reais na raiz do seu Firebase
 const getCollectionRef = (colName) => {
   if (typeof __firebase_config !== 'undefined') {
     return collection(db, 'artifacts', appId, 'public', 'data', colName);
@@ -76,13 +67,51 @@ const CATEGORIAS_PADRAO = [
 
 const TAMANHOS_CAMISETA = ["PP", "P", "M", "G", "GG", "EG"];
 
+// --- Funções Auxiliares (Fora do Componente) ---
+const limparCpf = (cpf) => cpf.replace(/\D/g, ''); 
+const formatarCpf = (cpf) => {
+  const limpo = limparCpf(cpf);
+  if (limpo.length !== 11) return cpf; 
+  return limpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+};
+
+const formatarTelefone = (valor) => {
+  let v = valor.replace(/\D/g, ''); 
+  if (v.length > 11) v = v.substring(0, 11); 
+  v = v.replace(/^(\d{2})(\d)/g, '($1) $2'); 
+  v = v.replace(/(\d{5})(\d)/, '$1-$2'); 
+  return v;
+};
+
+const calcularIdade = (dataNascimentoString) => {
+  const hoje = new Date();
+  const nasc = new Date(dataNascimentoString + 'T00:00:00'); 
+  let idade = hoje.getFullYear() - nasc.getFullYear();
+  const m = hoje.getMonth() - nasc.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) {
+    idade--; 
+  }
+  return idade;
+};
+
+const validarIdadeCategoria = (idade, nomeCategoria) => {
+  const matchRange = nomeCategoria.match(/\((\d+)\s*-\s*(\d+)\s*anos?\)/i);
+  if (matchRange) {
+    return idade >= parseInt(matchRange[1]) && idade <= parseInt(matchRange[2]);
+  }
+  const matchPlus = nomeCategoria.match(/\((\d+)\s*\+\)/);
+  if (matchPlus) {
+    return idade >= parseInt(matchPlus[1]);
+  }
+  return true; 
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState('atleta'); 
   const [isAdminAutenticado, setIsAdminAutenticado] = useState(false);
   const [senhaInput, setSenhaInput] = useState('');
 
-  // Estados dos Dados
   const [inscricoes, setInscricoes] = useState([]);
   const [modalidades, setModalidades] = useState([{ km: 5, ativa: true }, { km: 10, ativa: true }]);
   const [categorias, setCategorias] = useState(CATEGORIAS_PADRAO);
@@ -93,18 +122,30 @@ export default function App() {
   const [dataEvento, setDataEvento] = useState("");
   const [tempoRestante, setTempoRestante] = useState({ dias: 0, horas: 0, min: 0, seg: 0 });
 
-  // Estado do Formulário do Atleta
+  // 🌟 NOVIDADE: Estados de Pagamento
+  const [isEventoPago, setIsEventoPago] = useState(false);
+  const [valorInscricao, setValorInscricao] = useState("");
+  const [chavePix, setChavePix] = useState("");
+
   const [formAtleta, setFormAtleta] = useState({
     nome: '', cpf: '', dataNascimento: '', sexo: '',
-    modalidade: '', categoria: '', camiseta: '', municipio: '',
-    equipe: '', whatsapp: ''
+    modalidade: '', categoria: '', camiseta: '', municipio: '', equipe: '', whatsapp: ''
   });
   const [erroCpf, setErroCpf] = useState('');
+  
+  // 🌟 NOVIDADE: Estado para exibir a tela de sucesso do Atleta
+  const [inscricaoSucesso, setInscricaoSucesso] = useState(null);
+
+  const [mostrarFormAdmin, setMostrarFormAdmin] = useState(false);
+  const [formAdmin, setFormAdmin] = useState({
+    nome: '', cpf: '', dataNascimento: '', sexo: '',
+    modalidade: '', categoria: '', camiseta: '', municipio: '', equipe: '', whatsapp: ''
+  });
+
   const [novaModalidade, setNovaModalidade] = useState('');
   const [novaCategoria, setNovaCategoria] = useState('');
   const [editandoModalidade, setEditandoModalidade] = useState({ index: -1, valor: '' });
 
-  // 1. Inicializa Autenticação do Firebase
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -120,11 +161,8 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Busca Dados em Tempo Real (Inscrições e Configurações)
   useEffect(() => {
     if (!user) return;
-
-    // Conexão com as Configurações
     const configRef = getDocRef('config', 'evento-dados');
     const unsubConfig = onSnapshot(configRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -136,10 +174,14 @@ export default function App() {
         if (data.dataEvento !== undefined) setDataEvento(data.dataEvento);
         if (data.modalidades) setModalidades(data.modalidades);
         if (data.categorias) setCategorias(data.categorias);
+        
+        // 🌟 NOVIDADE: Carrega dados do PIX
+        if (data.isEventoPago !== undefined) setIsEventoPago(data.isEventoPago);
+        if (data.valorInscricao !== undefined) setValorInscricao(data.valorInscricao);
+        if (data.chavePix !== undefined) setChavePix(data.chavePix);
       }
     }, (err) => console.error("Erro Config:", err));
 
-    // Conexão com a lista de Inscrições na sua coleção "atletas"
     const inscricoesRef = getCollectionRef('atletas');
     const unsubInscricoes = onSnapshot(inscricoesRef, (snap) => {
       const lista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -149,7 +191,6 @@ export default function App() {
     return () => { unsubConfig(); unsubInscricoes(); };
   }, [user]);
 
-  // Carrega Biblioteca XLSX Dinamicamente
   useEffect(() => {
     const script = document.createElement('script');
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
@@ -157,14 +198,12 @@ export default function App() {
     document.body.appendChild(script);
   }, []);
 
-  // Efeito do Cronômetro Regressivo
   useEffect(() => {
     if (!dataEvento) return;
     const intervalo = setInterval(() => {
       const agora = new Date().getTime();
       const dataAlvo = new Date(dataEvento).getTime();
       const diferenca = dataAlvo - agora;
-
       if (diferenca < 0) {
         clearInterval(intervalo);
         setTempoRestante({ dias: 0, horas: 0, min: 0, seg: 0 });
@@ -180,7 +219,6 @@ export default function App() {
     return () => clearInterval(intervalo);
   }, [dataEvento]);
 
-  // --- Funções de Salvar no Firebase ---
   const salvarConfigNoFirebase = async (novosDados) => {
     if (!user) return;
     try {
@@ -190,11 +228,11 @@ export default function App() {
   };
 
   const salvarConfiguracoesGerais = () => {
-    salvarConfigNoFirebase({ vagasTotais, telefoneContato, bannerUrl, nomeEvento, dataEvento });
+    // 🌟 NOVIDADE: Salva também as opções do PIX
+    salvarConfigNoFirebase({ vagasTotais, telefoneContato, bannerUrl, nomeEvento, dataEvento, isEventoPago, valorInscricao, chavePix });
     alert("Configurações Gerais salvas na nuvem com sucesso!");
   };
 
-  // --- Funções de Utilidade e Formulário ---
   const aplicarMascaraCpf = (valor) => {
     return valor.replace(/\D/g, '').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})/, '$1-$2').replace(/(-\d{2})\d+?$/, '$1');
   };
@@ -218,44 +256,78 @@ export default function App() {
       } else {
         setErroCpf('');
       }
+    } else if (name === 'nome') {
+      const nomeApenasLetras = value.replace(/[^a-zA-ZÀ-ÿ\s]/g, '');
+      setFormAtleta({ ...formAtleta, [name]: nomeApenasLetras });
+    } else if (name === 'whatsapp') {
+      setFormAtleta({ ...formAtleta, [name]: formatarTelefone(value) });
     } else {
       setFormAtleta({ ...formAtleta, [name]: value });
     }
   };
 
+  const handleAdminInputChange = (e) => {
+    const { name, value } = e.target;
+    if (name === 'cpf') {
+      const masked = aplicarMascaraCpf(value);
+      setFormAdmin({ ...formAdmin, cpf: masked });
+    } else if (name === 'nome') {
+      const nomeApenasLetras = value.replace(/[^a-zA-ZÀ-ÿ\s]/g, '');
+      setFormAdmin({ ...formAdmin, [name]: nomeApenasLetras });
+    } else if (name === 'whatsapp') {
+      setFormAdmin({ ...formAdmin, [name]: formatarTelefone(value) });
+    } else {
+      setFormAdmin({ ...formAdmin, [name]: value });
+    }
+  };
+
   const handleSubmitInscricao = async (e) => {
     e.preventDefault();
+    const cpfLimpo = limparCpf(formAtleta.cpf);
     if (!user) return alert("Erro de conexão. Aguarde e tente novamente.");
     if (inscricoes.length >= vagasTotais) return alert("Desculpe, limite de vagas esgotado!");
     if (!validarCpf(formAtleta.cpf)) return setErroCpf('Corrija o CPF antes de enviar.');
 
+    const anoNascimento = parseInt(formAtleta.dataNascimento.substring(0, 4));
+    const anoAtual = new Date().getFullYear();
+    if (anoNascimento < 1900 || anoNascimento > anoAtual) {
+      return alert("Atenção: Por favor, insira um ano de nascimento válido.");
+    }
+
+    if (formAtleta.dataNascimento && formAtleta.categoria) {
+      const idadeAtleta = calcularIdade(formAtleta.dataNascimento);
+      const idadeValida = validarIdadeCategoria(idadeAtleta, formAtleta.categoria);
+      if (!idadeValida) {
+        return alert(`Atenção: Sua idade exata hoje é ${idadeAtleta} anos. Esta idade não é permitida para a categoria "${formAtleta.categoria}".`);
+      }
+    }
+
     try {
       const inscricoesRef = getCollectionRef('atletas');
-      
-      // 🌟 NOVIDADE: O sistema pesquisa se o CPF digitado já existe no banco de dados
-      const consultaCpf = query(inscricoesRef, where("cpf", "==", formAtleta.cpf));
+      const consultaCpf = query(inscricoesRef, where("cpfLimpo", "==", cpfLimpo));
       const resultadoConsulta = await getDocs(consultaCpf);
 
-      // Se o resultado não estiver vazio, significa que o CPF já foi usado!
       if (!resultadoConsulta.empty) {
         return alert("ATENÇÃO: Este CPF já possui uma inscrição confirmada neste evento!");
       }
 
-      // Se passou pela verificação acima, cria a inscrição normalmente
       const novaInscricao = {
         ...formAtleta,
+        cpf: formatarCpf(formAtleta.cpf), 
+        cpfLimpo: cpfLimpo,               
         dataHora: new Date().toLocaleString('pt-BR'),
         numero: gerarNumeroInscricao(formAtleta.modalidade)
       };
 
-      await addDoc(inscricoesRef, novaInscricao); // Salva na Nuvem
+      await addDoc(inscricoesRef, novaInscricao); 
       
+      // 🌟 NOVIDADE: Em vez do alert, armazena os dados para mostrar na Tela de Sucesso
+      setInscricaoSucesso(novaInscricao);
+
       setFormAtleta({
         nome: '', cpf: '', dataNascimento: '', sexo: '',
-        modalidade: '', categoria: '', camiseta: '', municipio: '',
-        equipe: '', whatsapp: ''
+        modalidade: '', categoria: '', camiseta: '', municipio: '', equipe: '', whatsapp: ''
       });
-      alert("Inscrição realizada com sucesso! Seu número é: " + novaInscricao.numero);
       
     } catch(error) {
       console.error(error);
@@ -263,7 +335,58 @@ export default function App() {
     }
   };
 
-  // --- Handlers de Administração ---
+  const handleSubmitAdmin = async (e) => {
+    e.preventDefault();
+    const cpfLimpo = limparCpf(formAdmin.cpf);
+    if (!validarCpf(formAdmin.cpf)) return alert('Corrija o CPF antes de enviar.');
+
+    const anoNascimento = parseInt(formAdmin.dataNascimento.substring(0, 4));
+    const anoAtual = new Date().getFullYear();
+    if (anoNascimento < 1900 || anoNascimento > anoAtual) {
+      return alert("Ano de nascimento inválido.");
+    }
+
+    try {
+      const inscricoesRef = getCollectionRef('atletas');
+      const consultaCpf = query(inscricoesRef, where("cpfLimpo", "==", cpfLimpo));
+      const resultadoConsulta = await getDocs(consultaCpf);
+
+      if (!resultadoConsulta.empty) {
+        return alert("Erro: Este CPF já está inscrito!");
+      }
+
+      const novaInscricao = {
+        ...formAdmin,
+        cpf: formatarCpf(formAdmin.cpf), 
+        cpfLimpo: cpfLimpo,               
+        dataHora: new Date().toLocaleString('pt-BR') + ' (Manual)',
+        numero: gerarNumeroInscricao(formAdmin.modalidade)
+      };
+
+      await addDoc(inscricoesRef, novaInscricao); 
+      setFormAdmin({
+        nome: '', cpf: '', dataNascimento: '', sexo: '',
+        modalidade: '', categoria: '', camiseta: '', municipio: '', equipe: '', whatsapp: ''
+      });
+      setMostrarFormAdmin(false); 
+      alert("Inscrição manual adicionada com sucesso! Número: " + novaInscricao.numero);
+    } catch(error) {
+      console.error(error);
+      alert("Falha ao processar inscrição manual.");
+    }
+  };
+
+  const removerInscricaoIndividual = async (id, nome) => {
+    if (window.confirm(`ATENÇÃO: Tem certeza que deseja excluir permanentemente a inscrição de ${nome}?`)) {
+      try {
+        await deleteDoc(getDocRef('atletas', id));
+      } catch (error) {
+        console.error(error);
+        alert("Erro ao tentar excluir a inscrição.");
+      }
+    }
+  };
+
   const handleLoginAdmin = (e) => {
     e.preventDefault();
     if (senhaInput === '685419') {
@@ -292,12 +415,8 @@ export default function App() {
     if (inscricoes.length === 0) return alert("Não há inscrições para exportar.");
     if (!window.XLSX) return alert("Aguarde o sistema carregar o motor de planilhas...");
 
-    // 🌟 NOVIDADE: Organiza a lista antes de gerar a planilha
-    // Primeiro agrupa pela Modalidade (KM) e depois põe o Número em ordem crescente (1, 2, 3...)
     const inscricoesOrdenadas = [...inscricoes].sort((a, b) => {
-      if (a.modalidade !== b.modalidade) {
-        return Number(a.modalidade) - Number(b.modalidade);
-      }
+      if (a.modalidade !== b.modalidade) return Number(a.modalidade) - Number(b.modalidade);
       return Number(a.numero) - Number(b.numero);
     });
 
@@ -305,7 +424,7 @@ export default function App() {
       "DATA/HORA": i.dataHora,
       "NÚMERO": i.numero,
       "NOME COMPLETO": i.nome,
-      "CPF": i.cpf,
+      "CPF": i.cpf, 
       "DATA NASCIMENTO": i.dataNascimento ? i.dataNascimento.split('-').reverse().join('/') : '',
       "SEXO": i.sexo,
       "MODALIDADE": i.modalidade ? `${i.modalidade}KM` : "-", 
@@ -322,7 +441,6 @@ export default function App() {
     window.XLSX.writeFile(workbook, "inscritos_evento.xlsx");
   };
 
-  // Funções de Modalidades
   const adicionarModalidade = () => {
     if (novaModalidade) {
       const novas = [...modalidades, { km: Number(novaModalidade), ativa: true }];
@@ -348,16 +466,13 @@ export default function App() {
   const salvarEdicaoModalidade = async () => {
     const kmNovo = parseInt(editandoModalidade.valor);
     if (!kmNovo || isNaN(kmNovo)) return;
-
     const modalidadeAntiga = modalidades[editandoModalidade.index];
     const kmAntigo = modalidadeAntiga.km;
-    
     const novasModalidades = [...modalidades];
     novasModalidades[editandoModalidade.index] = { ...modalidadeAntiga, km: kmNovo };
     setModalidades(novasModalidades);
     salvarConfigNoFirebase({ modalidades: novasModalidades });
 
-    // Atualiza inscrições vinculadas na nuvem
     if (user) {
       try {
         const batch = writeBatch(db);
@@ -372,7 +487,6 @@ export default function App() {
     setEditandoModalidade({ index: -1, valor: '' });
   };
 
-  // Funções de Categorias
   const adicionarCategoria = () => {
     if (novaCategoria) {
       const novas = [...categorias, { nome: novaCategoria, ativa: true }];
@@ -404,7 +518,6 @@ export default function App() {
     }
   };
 
-  // --- Renderização ---
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
       <header className="bg-slate-900 text-white shadow-md">
@@ -412,7 +525,7 @@ export default function App() {
           <div className="flex justify-between items-center h-16">
             <h1 className="text-xl font-bold tracking-tight">Sistema de Inscrição</h1>
             <nav className="flex space-x-4">
-              <button onClick={() => setView('atleta')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'atleta' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+              <button onClick={() => {setView('atleta'); setInscricaoSucesso(null);}} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'atleta' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
                 Portal do Atleta
               </button>
               <button onClick={() => setView('admin')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'admin' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
@@ -424,8 +537,6 @@ export default function App() {
       </header>
 
       <main className="flex-grow p-4 sm:p-6 lg:p-8 flex flex-col items-center">
-        
-        {/* CORREÇÃO AQUI: max-h-56, object-contain, bg-slate-900 */}
         {bannerUrl && (
           <div className="w-full max-w-4xl mb-8 flex justify-center">
             <img src={bannerUrl} alt="Banner do Evento" className="w-full max-h-56 object-contain bg-slate-900 rounded-xl shadow-md border border-gray-200" onError={(e) => { e.target.style.display = 'none'; }} />
@@ -450,89 +561,114 @@ export default function App() {
               </p>
             </div>
 
-            {inscricoes.length >= vagasTotais && (
+            {inscricoes.length >= vagasTotais && !inscricaoSucesso && (
               <div className="m-6 bg-red-100 border border-red-400 text-red-700 px-4 py-4 rounded-lg text-center shadow-sm" role="alert">
                 <strong className="font-bold block text-xl mb-1">Inscrições Encerradas!</strong>
                 <span className="block sm:inline">Todas as vagas para este evento já foram preenchidas. Fique atento às próximas edições!</span>
               </div>
             )}
 
-            <form onSubmit={handleSubmitInscricao} className="p-6 sm:p-8 space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">Informações Pessoais</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                  <div className="sm:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Nome Completo *</label>
-                    <input type="text" name="nome" required value={formAtleta.nome} onChange={handleInputChange} onBlur={() => setFormAtleta({...formAtleta, nome: formAtleta.nome.trim()})} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" placeholder="Digite seu nome completo" disabled={inscricoes.length >= vagasTotais} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">CPF *</label>
-                    <input type="text" name="cpf" required value={formAtleta.cpf} onChange={handleInputChange} className={`w-full border rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500 ${erroCpf ? 'border-red-500' : 'border-gray-300'}`} placeholder="000.000.000-00" disabled={inscricoes.length >= vagasTotais} />
-                    {erroCpf && <p className="mt-1 text-xs text-red-500">{erroCpf}</p>}
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Data de Nascimento *</label>
-                    <input type="date" name="dataNascimento" required min="1927-01-01" value={formAtleta.dataNascimento} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Sexo *</label>
-                    <select name="sexo" required value={formAtleta.sexo} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
-                      <option value="">Selecione</option>
-                      <option value="M">M</option>
-                      <option value="F">F</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Município (Rondônia) *</label>
-                    <select name="municipio" required value={formAtleta.municipio} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
-                      <option value="">Selecione sua cidade</option>
-                      {MUNICIPIOS_RO.map(cidade => <option key={cidade} value={cidade}>{cidade}</option>)}
-                    </select>
-                  </div>
-                </div>
-              </div>
+            {/* 🌟 TELA DE SUCESSO (Aparece em vez do formulário se a inscrição for concluída) */}
+            {inscricaoSucesso ? (
+              <div className="p-8 text-center bg-gray-50 border border-gray-100 m-6 rounded-xl shadow-inner">
+                <h3 className="text-3xl font-bold text-green-600 mb-2">Inscrição Confirmada! 🎉</h3>
+                <p className="text-gray-700 mb-4 text-lg">O seu número de peito oficial é:</p>
+                <span className="text-6xl font-extrabold text-slate-800 block mb-8 tracking-wider">{inscricaoSucesso.numero}</span>
 
-              <div>
-                <h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">Informações do Evento</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Modalidade *</label>
-                    <select name="modalidade" required value={formAtleta.modalidade} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
-                      <option value="">Selecione a distância</option>
-                      {modalidades.filter(m => m.ativa).map(mod => <option key={mod.km} value={mod.km}>{mod.km} KM</option>)}
-                    </select>
+                {isEventoPago && (
+                  <div className="bg-white p-6 rounded-xl shadow-md border border-gray-200 text-left inline-block w-full max-w-md mx-auto">
+                    <h4 className="font-bold text-slate-800 mb-3 border-b pb-2 flex items-center">
+                      <span className="text-xl mr-2">💳</span> Instruções de Pagamento
+                    </h4>
+                    <p className="text-sm text-gray-600 mb-2">Valor da inscrição: <strong className="text-xl text-green-700 ml-1">R$ {valorInscricao}</strong></p>
+                    <p className="text-sm text-gray-600 mb-5">Chave PIX: <strong className="text-lg text-slate-800 ml-1 break-all bg-slate-100 px-2 py-1 rounded select-all">{chavePix}</strong></p>
+                    <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r text-sm text-blue-800 font-medium">
+                      Faça o PIX e envie o comprovante para o WhatsApp: <br/><strong className="text-base mt-1 block">{telefoneContato}</strong>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Categoria *</label>
-                    <select name="categoria" required value={formAtleta.categoria} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
-                      <option value="">Selecione sua categoria</option>
-                      {categorias.filter(c => c.ativa).map(cat => <option key={cat.nome} value={cat.nome}>{cat.nome}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Tamanho Camiseta *</label>
-                    <select name="camiseta" required value={formAtleta.camiseta} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
-                      <option value="">Selecione o tamanho</option>
-                      {TAMANHOS_CAMISETA.map(tam => <option key={tam} value={tam}>{tam}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">WhatsApp *</label>
-                    <input type="text" name="whatsapp" required value={formAtleta.whatsapp} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" placeholder="(69) 90000-0000" disabled={inscricoes.length >= vagasTotais} />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Equipe / Assessoria (Opcional)</label>
-                    <input type="text" name="equipe" value={formAtleta.equipe} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" placeholder="Nome da sua equipe" disabled={inscricoes.length >= vagasTotais} />
-                  </div>
-                </div>
-              </div>
+                )}
 
-              <div className="pt-4">
-                <button type="submit" disabled={inscricoes.length >= vagasTotais} className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-md hover:bg-blue-700 transition duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed">
-                  {inscricoes.length >= vagasTotais ? 'Vagas Esgotadas' : 'Confirmar Inscrição'}
+                <button onClick={() => setInscricaoSucesso(null)} className="mt-8 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow transition-transform transform hover:scale-105">
+                  Fazer nova inscrição
                 </button>
               </div>
-            </form>
+            ) : (
+              <form onSubmit={handleSubmitInscricao} className="p-6 sm:p-8 space-y-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">Informações Pessoais</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <div className="sm:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Nome Completo *</label>
+                      <input type="text" name="nome" required value={formAtleta.nome} onChange={handleInputChange} onBlur={() => setFormAtleta({...formAtleta, nome: formAtleta.nome.trim()})} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" placeholder="Digite seu nome completo" disabled={inscricoes.length >= vagasTotais} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">CPF *</label>
+                      <input type="text" name="cpf" required value={formAtleta.cpf} onChange={handleInputChange} className={`w-full border rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500 ${erroCpf ? 'border-red-500' : 'border-gray-300'}`} placeholder="000.000.000-00" disabled={inscricoes.length >= vagasTotais} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Data de Nascimento *</label>
+                      <input type="date" name="dataNascimento" required min="1900-01-01" max={new Date().toISOString().split('T')[0]} value={formAtleta.dataNascimento} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Sexo *</label>
+                      <select name="sexo" required value={formAtleta.sexo} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
+                        <option value="">Selecione</option>
+                        <option value="M">M</option>
+                        <option value="F">F</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Município (Rondônia) *</label>
+                      <select name="municipio" required value={formAtleta.municipio} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
+                        <option value="">Selecione sua cidade</option>
+                        {MUNICIPIOS_RO.map(cidade => <option key={cidade} value={cidade}>{cidade}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">Informações do Evento</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Modalidade *</label>
+                      <select name="modalidade" required value={formAtleta.modalidade} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
+                        <option value="">Selecione a distância</option>
+                        {modalidades.filter(m => m.ativa).map(mod => <option key={mod.km} value={mod.km}>{mod.km} KM</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Categoria *</label>
+                      <select name="categoria" required value={formAtleta.categoria} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
+                        <option value="">Selecione sua categoria</option>
+                        {categorias.filter(c => c.ativa).map(cat => <option key={cat.nome} value={cat.nome}>{cat.nome}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Tamanho Camiseta *</label>
+                      <select name="camiseta" required value={formAtleta.camiseta} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
+                        <option value="">Selecione o tamanho</option>
+                        {TAMANHOS_CAMISETA.map(tam => <option key={tam} value={tam}>{tam}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">WhatsApp *</label>
+                      <input type="text" name="whatsapp" required value={formAtleta.whatsapp} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" placeholder="(69) 90000-0000" disabled={inscricoes.length >= vagasTotais} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Equipe / Assessoria (Opcional)</label>
+                      <input type="text" name="equipe" value={formAtleta.equipe} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" placeholder="Nome da sua equipe" disabled={inscricoes.length >= vagasTotais} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4">
+                  <button type="submit" disabled={inscricoes.length >= vagasTotais} className="w-full bg-blue-600 text-white font-bold py-4 px-4 rounded-md hover:bg-blue-700 transition duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed shadow-md text-lg">
+                    {inscricoes.length >= vagasTotais ? 'Vagas Esgotadas' : (isEventoPago ? `Inscrever-se (R$ ${valorInscricao})` : 'Confirmar Inscrição')}
+                  </button>
+                </div>
+              </form>
+            )}
             <footer className="bg-gray-100 p-4 text-center border-t border-gray-200">
               <p className="text-gray-600 text-sm">Dúvidas sobre o evento? Entre em contato: <strong className="text-gray-800">{telefoneContato}</strong></p>
             </footer>
@@ -560,14 +696,34 @@ export default function App() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
-              {/* Gerais */}
               <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
                 <h3 className="font-bold text-lg mb-4 text-gray-800 border-b pb-2">Configurações Gerais</h3>
                 <div className="space-y-4">
                   <div><label className="block text-sm font-medium text-gray-700 mb-1">Nome do Evento</label><input type="text" value={nomeEvento} onChange={(e) => setNomeEvento(e.target.value)} className="w-full border rounded p-2 focus:ring-slate-500 focus:border-slate-500" /></div>
                   <div><label className="block text-sm font-medium text-gray-700 mb-1">Data e Hora</label><input type="datetime-local" value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} className="w-full border rounded p-2 focus:ring-slate-500 focus:border-slate-500" /></div>
                   <div><label className="block text-sm font-medium text-gray-700 mb-1">Limite de Vagas</label><input type="number" value={vagasTotais} onChange={(e) => setVagasTotais(Number(e.target.value))} className="w-full border rounded p-2 focus:ring-slate-500 focus:border-slate-500" min="1" /></div>
-                  <div><label className="block text-sm font-medium text-gray-700 mb-1">Contato (Rodapé)</label><input type="text" value={telefoneContato} onChange={(e) => setTelefoneContato(e.target.value)} className="w-full border rounded p-2 focus:ring-slate-500 focus:border-slate-500" /></div>
+                  <div><label className="block text-sm font-medium text-gray-700 mb-1">Contato (Rodapé)</label><input type="text" value={telefoneContato} onChange={(e) => setTelefoneContato(formatarTelefone(e.target.value))} className="w-full border rounded p-2 focus:ring-slate-500 focus:border-slate-500" /></div>
+                  
+                  {/* 🌟 NOVIDADE: Painel de Pagamento do Admin */}
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <label className="flex items-center space-x-2 mb-3 cursor-pointer">
+                      <input type="checkbox" checked={isEventoPago} onChange={(e) => setIsEventoPago(e.target.checked)} className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500" />
+                      <span className="text-sm font-bold text-blue-900">Cobrar inscrição (Evento Pago)</span>
+                    </label>
+                    {isEventoPago && (
+                      <div className="flex space-x-2">
+                        <div className="w-1/3">
+                          <label className="block text-xs font-bold text-gray-700 mb-1">Valor (R$)</label>
+                          <input type="text" value={valorInscricao} onChange={(e) => setValorInscricao(e.target.value)} placeholder="Ex: 50,00" className="w-full border rounded p-2 text-sm focus:ring-slate-500 focus:border-slate-500" />
+                        </div>
+                        <div className="flex-1">
+                          <label className="block text-xs font-bold text-gray-700 mb-1">Chave PIX</label>
+                          <input type="text" value={chavePix} onChange={(e) => setChavePix(e.target.value)} placeholder="E-mail, CPF ou Celular" className="w-full border rounded p-2 text-sm focus:ring-slate-500 focus:border-slate-500" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Banner (URL ou Arquivo)</label>
                     <div className="flex space-x-2">
@@ -580,7 +736,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Modalidades */}
               <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
                 <h3 className="font-bold text-lg mb-4 text-gray-800 border-b pb-2">Modalidades (KM)</h3>
                 <div className="flex space-x-2 mb-4">
@@ -611,7 +766,6 @@ export default function App() {
                 </ul>
               </div>
 
-              {/* Categorias */}
               <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
                 <h3 className="font-bold text-lg mb-4 text-gray-800 border-b pb-2">Categorias de Idade</h3>
                 <div className="flex space-x-2 mb-4">
@@ -632,16 +786,83 @@ export default function App() {
               </div>
             </div>
 
-            {/* Tabela de Inscritos */}
             <div className="flex justify-between items-center mt-8">
               <h3 className="text-xl font-bold text-slate-800">Inscritos Cadastrados</h3>
-              <div className="space-x-3">
-                <button onClick={baixarPlanilha} className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 font-medium transition">⬇ Baixar Planilha (.xlsx)</button>
-                <button onClick={limparInscricoes} className="bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded shadow hover:bg-red-600 hover:text-white font-medium transition">🗑 Limpar Inscrições</button>
+              <div className="space-x-3 flex items-center">
+                <button onClick={() => setMostrarFormAdmin(!mostrarFormAdmin)} className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 font-medium transition">
+                  {mostrarFormAdmin ? '✖ Fechar Formulário' : '➕ Adicionar Manualmente'}
+                </button>
+                <button onClick={baixarPlanilha} className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 font-medium transition">⬇ Baixar Planilha</button>
+                <button onClick={limparInscricoes} className="bg-red-100 text-red-600 border border-red-200 px-4 py-2 rounded shadow hover:bg-red-600 hover:text-white font-medium transition">🗑 Limpar Tudo</button>
               </div>
             </div>
 
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            {mostrarFormAdmin && (
+              <div className="bg-blue-50 p-6 rounded-lg border border-blue-200 shadow-inner mb-6">
+                <h4 className="font-bold text-blue-800 mb-4 border-b border-blue-200 pb-2">Nova Inscrição Manual (Ignora restrições)</h4>
+                <form onSubmit={handleSubmitAdmin} className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-gray-700">Nome</label>
+                    <input type="text" name="nome" required value={formAdmin.nome} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">CPF</label>
+                    <input type="text" name="cpf" required value={formAdmin.cpf} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">Nascimento</label>
+                    <input type="date" name="dataNascimento" required value={formAdmin.dataNascimento} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">Sexo</label>
+                    <select name="sexo" required value={formAdmin.sexo} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm">
+                      <option value="">Selecione</option><option value="M">M</option><option value="F">F</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">Modalidade</label>
+                    <select name="modalidade" required value={formAdmin.modalidade} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm">
+                      <option value="">Selecione</option>
+                      {modalidades.map(mod => <option key={mod.km} value={mod.km}>{mod.km} KM</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">Categoria</label>
+                    <select name="categoria" required value={formAdmin.categoria} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm">
+                      <option value="">Selecione</option>
+                      {categorias.map(cat => <option key={cat.nome} value={cat.nome}>{cat.nome}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">Camiseta</label>
+                    <select name="camiseta" required value={formAdmin.camiseta} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm">
+                      <option value="">Selecione</option>
+                      {TAMANHOS_CAMISETA.map(tam => <option key={tam} value={tam}>{tam}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">Município</label>
+                    <select name="municipio" required value={formAdmin.municipio} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm">
+                      <option value="">Selecione</option>
+                      {MUNICIPIOS_RO.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">WhatsApp</label>
+                    <input type="text" name="whatsapp" required value={formAdmin.whatsapp} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm" />
+                  </div>
+                  <div className="sm:col-span-2 lg:col-span-1">
+                    <label className="block text-xs font-medium text-gray-700">Equipe</label>
+                    <input type="text" name="equipe" value={formAdmin.equipe} onChange={handleAdminInputChange} className="w-full border rounded p-2 text-sm" />
+                  </div>
+                  <div className="sm:col-span-3 lg:col-span-1 flex items-end">
+                    <button type="submit" className="w-full bg-blue-700 text-white font-bold py-2 px-4 rounded hover:bg-blue-800 transition">Salvar</button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mt-4">
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                   <thead className="bg-slate-100">
@@ -650,19 +871,14 @@ export default function App() {
                       <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">Número</th>
                       <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">Nome Completo</th>
                       <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">CPF</th>
-                      <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">Data Nasc.</th>
-                      <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">Sexo</th>
                       <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">Modalidade</th>
-                      <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">Categoria</th>
-                      <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">Tamanho</th>
-                      <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">Município</th>
-                      <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">Equipe</th>
                       <th className="px-4 py-3 text-left font-bold text-slate-600 uppercase tracking-wider">WhatsApp</th>
+                      <th className="px-4 py-3 text-center font-bold text-slate-600 uppercase tracking-wider">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {inscricoes.length === 0 ? (
-                      <tr><td colSpan="12" className="px-4 py-8 text-center text-gray-500 italic">Nenhum atleta inscrito até o momento.</td></tr>
+                      <tr><td colSpan="7" className="px-4 py-8 text-center text-gray-500 italic">Nenhum atleta inscrito até o momento.</td></tr>
                     ) : (
                       inscricoes.map((insc, idx) => (
                         <tr key={idx} className="hover:bg-gray-50">
@@ -670,14 +886,13 @@ export default function App() {
                           <td className="px-4 py-3 whitespace-nowrap font-bold text-slate-800">{insc.numero}</td>
                           <td className="px-4 py-3 whitespace-nowrap font-medium text-gray-900">{insc.nome}</td>
                           <td className="px-4 py-3 whitespace-nowrap text-gray-600">{insc.cpf}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-gray-600">{insc.dataNascimento ? insc.dataNascimento.split('-').reverse().join('/') : ''}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-gray-600">{insc.sexo}</td>
                           <td className="px-4 py-3 whitespace-nowrap font-medium text-blue-600">{insc.modalidade ? `${insc.modalidade} KM` : '-'}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-gray-600">{insc.categoria}</td>
-                          <td className="px-4 py-3 whitespace-nowrap font-bold text-gray-700">{insc.camiseta}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-gray-600">{insc.municipio}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-gray-600">{insc.equipe || '-'}</td>
                           <td className="px-4 py-3 whitespace-nowrap text-gray-600">{insc.whatsapp || insc.celular}</td>
+                          <td className="px-4 py-3 whitespace-nowrap text-center">
+                            <button onClick={() => removerInscricaoIndividual(insc.id, insc.nome)} className="text-red-500 hover:text-red-700 font-bold text-xs bg-red-50 px-2 py-1 rounded border border-red-200 hover:bg-red-100 transition">
+                              Excluir
+                            </button>
+                          </td>
                         </tr>
                       ))
                     )}
