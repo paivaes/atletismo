@@ -122,7 +122,6 @@ export default function App() {
   const [dataEvento, setDataEvento] = useState("");
   const [tempoRestante, setTempoRestante] = useState({ dias: 0, horas: 0, min: 0, seg: 0 });
 
-  // 🌟 NOVIDADE: Estados de Pagamento
   const [isEventoPago, setIsEventoPago] = useState(false);
   const [valorInscricao, setValorInscricao] = useState("");
   const [chavePix, setChavePix] = useState("");
@@ -132,9 +131,12 @@ export default function App() {
     modalidade: '', categoria: '', camiseta: '', municipio: '', equipe: '', whatsapp: ''
   });
   const [erroCpf, setErroCpf] = useState('');
-  
-  // 🌟 NOVIDADE: Estado para exibir a tela de sucesso do Atleta
   const [inscricaoSucesso, setInscricaoSucesso] = useState(null);
+
+  // 🌟 NOVIDADE: Estados para a aba de Consulta
+  const [termoConsulta, setTermoConsulta] = useState('');
+  const [resultadoConsulta, setResultadoConsulta] = useState(null);
+  const [mensagemConsulta, setMensagemConsulta] = useState('');
 
   const [mostrarFormAdmin, setMostrarFormAdmin] = useState(false);
   const [formAdmin, setFormAdmin] = useState({
@@ -174,8 +176,6 @@ export default function App() {
         if (data.dataEvento !== undefined) setDataEvento(data.dataEvento);
         if (data.modalidades) setModalidades(data.modalidades);
         if (data.categorias) setCategorias(data.categorias);
-        
-        // 🌟 NOVIDADE: Carrega dados do PIX
         if (data.isEventoPago !== undefined) setIsEventoPago(data.isEventoPago);
         if (data.valorInscricao !== undefined) setValorInscricao(data.valorInscricao);
         if (data.chavePix !== undefined) setChavePix(data.chavePix);
@@ -228,7 +228,6 @@ export default function App() {
   };
 
   const salvarConfiguracoesGerais = () => {
-    // 🌟 NOVIDADE: Salva também as opções do PIX
     salvarConfigNoFirebase({ vagasTotais, telefoneContato, bannerUrl, nomeEvento, dataEvento, isEventoPago, valorInscricao, chavePix });
     alert("Configurações Gerais salvas na nuvem com sucesso!");
   };
@@ -320,10 +319,7 @@ export default function App() {
       };
 
       await addDoc(inscricoesRef, novaInscricao); 
-      
-      // 🌟 NOVIDADE: Em vez do alert, armazena os dados para mostrar na Tela de Sucesso
       setInscricaoSucesso(novaInscricao);
-
       setFormAtleta({
         nome: '', cpf: '', dataNascimento: '', sexo: '',
         modalidade: '', categoria: '', camiseta: '', municipio: '', equipe: '', whatsapp: ''
@@ -332,6 +328,31 @@ export default function App() {
     } catch(error) {
       console.error(error);
       alert("Falha ao processar inscrição.");
+    }
+  };
+
+  // 🌟 NOVIDADE: Função de Consulta de Inscrição
+  const handleConsultar = (e) => {
+    e.preventDefault();
+    if (!termoConsulta.trim()) return;
+
+    const termo = termoConsulta.toLowerCase().trim();
+    const apenasNumeros = termo.replace(/\D/g, '');
+
+    const encontrados = inscricoes.filter(atleta => {
+      // Verifica se bate exatamente o CPF (se digitou números suficientes)
+      const matchCpf = (apenasNumeros.length === 11 && atleta.cpfLimpo === apenasNumeros);
+      // Verifica se o nome digitado faz parte do nome do atleta
+      const matchNome = atleta.nome.toLowerCase().includes(termo);
+      return matchCpf || matchNome;
+    });
+
+    if (encontrados.length > 0) {
+      setResultadoConsulta(encontrados);
+      setMensagemConsulta('');
+    } else {
+      setResultadoConsulta(null);
+      setMensagemConsulta('Nenhuma inscrição foi encontrada com este Nome ou CPF.');
     }
   };
 
@@ -524,12 +545,16 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <h1 className="text-xl font-bold tracking-tight">Sistema de Inscrição</h1>
-            <nav className="flex space-x-4">
-              <button onClick={() => {setView('atleta'); setInscricaoSucesso(null);}} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'atleta' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
-                Portal do Atleta
+            <nav className="flex space-x-2 sm:space-x-4">
+              <button onClick={() => {setView('atleta'); setInscricaoSucesso(null);}} className={`px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${view === 'atleta' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+                Inscrever-se
               </button>
-              <button onClick={() => setView('admin')} className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${view === 'admin' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
-                Área Restrita (Admin)
+              {/* 🌟 NOVIDADE: Botão da aba de Consulta */}
+              <button onClick={() => {setView('consulta'); setResultadoConsulta(null); setTermoConsulta(''); setMensagemConsulta('');}} className={`px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${view === 'consulta' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+                Consultar Inscrição
+              </button>
+              <button onClick={() => setView('admin')} className={`px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${view === 'admin' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+                Área Restrita
               </button>
             </nav>
           </div>
@@ -540,6 +565,59 @@ export default function App() {
         {bannerUrl && (
           <div className="w-full max-w-4xl mb-8 flex justify-center">
             <img src={bannerUrl} alt="Banner do Evento" className="w-full max-h-56 object-contain bg-slate-900 rounded-xl shadow-md border border-gray-200" onError={(e) => { e.target.style.display = 'none'; }} />
+          </div>
+        )}
+
+        {/* --- VISÃO DE CONSULTA DE INSCRIÇÃO --- */}
+        {view === 'consulta' && (
+          <div className="w-full max-w-3xl bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden p-6 sm:p-8 mt-4">
+             <h2 className="text-2xl font-bold text-slate-800 mb-6 border-b pb-2">Consultar Inscrição</h2>
+             <form onSubmit={handleConsultar} className="flex flex-col sm:flex-row gap-4 mb-6">
+                <input
+                  type="text"
+                  placeholder="Digite seu Nome completo ou CPF"
+                  value={termoConsulta}
+                  onChange={(e) => setTermoConsulta(e.target.value)}
+                  className="flex-1 border border-gray-300 rounded-md p-3 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <button type="submit" className="bg-slate-800 text-white font-bold py-3 px-6 rounded-md hover:bg-slate-900 transition shadow">
+                  Buscar Atleta
+                </button>
+             </form>
+
+             {mensagemConsulta && (
+               <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-md text-center font-medium shadow-sm">{mensagemConsulta}</div>
+             )}
+
+             {resultadoConsulta && resultadoConsulta.length > 0 && (
+               <div className="space-y-4">
+                 {resultadoConsulta.map((atleta, idx) => (
+                   <div key={idx} className="bg-blue-50 border border-blue-200 rounded-lg p-5 shadow-sm transition transform hover:scale-[1.01]">
+                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div>
+                          <h4 className="font-bold text-xl text-slate-800 mb-1">{atleta.nome}</h4>
+                          <p className="text-gray-700 text-sm">Categoria: <strong className="text-blue-700">{atleta.categoria}</strong></p>
+                          <p className="text-gray-700 text-sm">Distância: <strong className="text-blue-700">{atleta.modalidade} KM</strong></p>
+                        </div>
+                        <div className="bg-white border-2 border-slate-800 rounded-lg p-3 text-center min-w-[120px] shadow-sm">
+                          <span className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nº de Peito</span>
+                          <span className="block text-4xl font-extrabold text-slate-800 leading-none">{atleta.numero}</span>
+                        </div>
+                     </div>
+                   </div>
+                 ))}
+                 
+                 {/* 🌟 AVISO IMPORTANTE EXIGIDO */}
+                 <div className="mt-6 bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r-md shadow-sm">
+                    <div className="flex items-start">
+                      <span className="text-xl mr-3 leading-none">⚠️</span>
+                      <p className="text-sm text-yellow-800">
+                        <strong>Observação Importante:</strong> A numeração do atleta informada acima é provisória e pode sofrer alterações por parte da organização até o dia oficial da entrega dos kits.
+                      </p>
+                    </div>
+                 </div>
+               </div>
+             )}
           </div>
         )}
 
@@ -568,7 +646,6 @@ export default function App() {
               </div>
             )}
 
-            {/* 🌟 TELA DE SUCESSO (Aparece em vez do formulário se a inscrição for concluída) */}
             {inscricaoSucesso ? (
               <div className="p-8 text-center bg-gray-50 border border-gray-100 m-6 rounded-xl shadow-inner">
                 <h3 className="text-3xl font-bold text-green-600 mb-2">Inscrição Confirmada! 🎉</h3>
@@ -704,7 +781,6 @@ export default function App() {
                   <div><label className="block text-sm font-medium text-gray-700 mb-1">Limite de Vagas</label><input type="number" value={vagasTotais} onChange={(e) => setVagasTotais(Number(e.target.value))} className="w-full border rounded p-2 focus:ring-slate-500 focus:border-slate-500" min="1" /></div>
                   <div><label className="block text-sm font-medium text-gray-700 mb-1">Contato (Rodapé)</label><input type="text" value={telefoneContato} onChange={(e) => setTelefoneContato(formatarTelefone(e.target.value))} className="w-full border rounded p-2 focus:ring-slate-500 focus:border-slate-500" /></div>
                   
-                  {/* 🌟 NOVIDADE: Painel de Pagamento do Admin */}
                   <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                     <label className="flex items-center space-x-2 mb-3 cursor-pointer">
                       <input type="checkbox" checked={isEventoPago} onChange={(e) => setIsEventoPago(e.target.checked)} className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500" />
