@@ -259,6 +259,20 @@ export default function App() {
       setFormAtleta({ ...formAtleta, [name]: nomeApenasLetras });
     } else if (name === 'whatsapp') {
       setFormAtleta({ ...formAtleta, [name]: formatarTelefone(value) });
+    } else if (name === 'dataNascimento') {
+      // --- NOVA LÓGICA: AUTO SELEÇÃO DE CATEGORIA ---
+      let categoriaAutomatica = '';
+      if (value) {
+        const idadeAtleta = calcularIdade(value);
+        const categoriaEncontrada = categorias.find(cat => cat.ativa && validarIdadeCategoria(idadeAtleta, cat.nome));
+        
+        if (categoriaEncontrada) {
+          categoriaAutomatica = categoriaEncontrada.nome;
+        } else {
+          alert(`Sua idade exata hoje é ${idadeAtleta} anos. Você não se enquadra em nenhuma categoria ativa prevista para este evento.`);
+        }
+      }
+      setFormAtleta({ ...formAtleta, dataNascimento: value, categoria: categoriaAutomatica });
     } else {
       setFormAtleta({ ...formAtleta, [name]: value });
     }
@@ -290,6 +304,10 @@ export default function App() {
     const anoAtual = new Date().getFullYear();
     if (anoNascimento < 1900 || anoNascimento > anoAtual) {
       return alert("Atenção: Por favor, insira um ano de nascimento válido.");
+    }
+
+    if (!formAtleta.categoria) {
+      return alert("Inscrição bloqueada: A sua idade não se enquadra em nenhuma categoria ativa neste evento.");
     }
 
     if (formAtleta.dataNascimento && formAtleta.categoria) {
@@ -709,9 +727,13 @@ export default function App() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Categoria *</label>
-                      <select name="categoria" required value={formAtleta.categoria} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500" disabled={inscricoes.length >= vagasTotais}>
-                        <option value="">Selecione sua categoria</option>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Categoria (Automática) *</label>
+                      <select name="categoria" required value={formAtleta.categoria} onChange={handleInputChange} className="w-full border border-gray-300 rounded-md shadow-sm p-2.5 bg-gray-100 text-gray-600 pointer-events-none focus:outline-none" tabIndex="-1">
+                        <option value="">
+                          {formAtleta.dataNascimento 
+                            ? (formAtleta.categoria ? formAtleta.categoria : "Idade fora do permitido") 
+                            : "Preencha a data de nascimento primeiro"}
+                        </option>
                         {categorias.filter(c => c.ativa).map(cat => <option key={cat.nome} value={cat.nome}>{cat.nome}</option>)}
                       </select>
                     </div>
