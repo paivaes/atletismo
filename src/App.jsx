@@ -661,7 +661,7 @@ export default function App() {
             {inscricaoSucesso ? (
               <div className="p-8 text-center bg-gray-50 border border-gray-100 m-6 rounded-xl shadow-inner">
                 <h3 className="text-3xl font-bold text-green-600 mb-2">Inscrição Confirmada! 🎉</h3>
-                <p className="text-gray-700 mb-4 text-lg">O seu número de peito provisório é:</p>
+                <p className="text-gray-700 mb-4 text-lg">O seu número de peito oficial é:</p>
                 <span className="text-6xl font-extrabold text-slate-800 block mb-4 tracking-wider">{inscricaoSucesso.numero}</span>
                 
                 <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r-md shadow-sm mb-8 max-w-md mx-auto text-left">
