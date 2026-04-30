@@ -133,10 +133,6 @@ export default function App() {
   const [erroCpf, setErroCpf] = useState('');
   const [inscricaoSucesso, setInscricaoSucesso] = useState(null);
 
-<<<<<<< HEAD
-  // 🌟 NOVIDADE: Estados para a aba de Consulta
-=======
->>>>>>> linha-temporaria
   const [termoConsulta, setTermoConsulta] = useState('');
   const [resultadoConsulta, setResultadoConsulta] = useState(null);
   const [mensagemConsulta, setMensagemConsulta] = useState('');
@@ -334,10 +330,6 @@ export default function App() {
     }
   };
 
-<<<<<<< HEAD
-  // 🌟 NOVIDADE: Função de Consulta de Inscrição
-=======
->>>>>>> linha-temporaria
   const handleConsultar = (e) => {
     e.preventDefault();
     if (!termoConsulta.trim()) return;
@@ -346,13 +338,7 @@ export default function App() {
     const apenasNumeros = termo.replace(/\D/g, '');
 
     const encontrados = inscricoes.filter(atleta => {
-<<<<<<< HEAD
-      // Verifica se bate exatamente o CPF (se digitou números suficientes)
       const matchCpf = (apenasNumeros.length === 11 && atleta.cpfLimpo === apenasNumeros);
-      // Verifica se o nome digitado faz parte do nome do atleta
-=======
-      const matchCpf = (apenasNumeros.length === 11 && atleta.cpfLimpo === apenasNumeros);
->>>>>>> linha-temporaria
       const matchNome = atleta.nome.toLowerCase().includes(termo);
       return matchCpf || matchNome;
     });
@@ -559,10 +545,6 @@ export default function App() {
               <button onClick={() => {setView('atleta'); setInscricaoSucesso(null);}} className={`px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${view === 'atleta' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
                 Inscrever-se
               </button>
-<<<<<<< HEAD
-              {/* 🌟 NOVIDADE: Botão da aba de Consulta */}
-=======
->>>>>>> linha-temporaria
               <button onClick={() => {setView('consulta'); setResultadoConsulta(null); setTermoConsulta(''); setMensagemConsulta('');}} className={`px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${view === 'consulta' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
                 Consultar Inscrição
               </button>
@@ -620,10 +602,6 @@ export default function App() {
                    </div>
                  ))}
                  
-<<<<<<< HEAD
-                 {/* 🌟 AVISO IMPORTANTE EXIGIDO */}
-=======
->>>>>>> linha-temporaria
                  <div className="mt-6 bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r-md shadow-sm">
                     <div className="flex items-start">
                       <span className="text-xl mr-3 leading-none">⚠️</span>
