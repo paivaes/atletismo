@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "homepage": "https://github.com/paivaes/atletismo.git",
+  "homepage": "https://paivaes.github.io/atletismo",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -26,7 +26,10 @@
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
+<<<<<<< HEAD
     "gh-pages": "^6.3.0",
+=======
+>>>>>>> linha-temporaria
     "globals": "^17.4.0",
     "vite": "^8.0.4"
   }
