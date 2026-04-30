@@ -624,7 +624,7 @@ export default function App() {
                     <div className="flex items-start">
                       <span className="text-xl mr-3 leading-none">⚠️</span>
                       <p className="text-sm text-yellow-800">
-                        <strong>Observação Importante:</strong> A numeração do atleta informada acima é provisória e pode sofrer alterações por parte da organização até o dia oficial da entrega dos kits.
+                        <strong>Observação Importante:</strong> A numeração do atleta informada acima pode sofrer alterações por parte da organização até o dia oficial da entrega dos kits.
                       </p>
                     </div>
                  </div>
