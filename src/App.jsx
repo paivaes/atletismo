@@ -84,26 +84,27 @@ const formatarTelefone = (valor) => {
 };
 
 const calcularIdade = (dataNascimentoString) => {
-  const hoje = new Date();
-  const nasc = new Date(dataNascimentoString + 'T00:00:00'); 
-  let idade = hoje.getFullYear() - nasc.getFullYear();
-  const m = hoje.getMonth() - nasc.getMonth();
-  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) {
-    idade--; 
-  }
-  return idade;
+  // Regra Oficial do Atletismo (CBAt): Idade = Ano Atual - Ano de Nascimento
+  const anoAtual = new Date().getFullYear();
+  const anoNascimento = parseInt(dataNascimentoString.substring(0, 4));
+  return anoAtual - anoNascimento;
 };
 
 const validarIdadeCategoria = (idade, nomeCategoria) => {
-  const matchRange = nomeCategoria.match(/\((\d+)\s*-\s*(\d+)\s*anos?\)/i);
+  // 1. Busca por intervalos em vários formatos: "18-23", "18 a 23", "(18 - 23 anos)"
+  const matchRange = nomeCategoria.match(/(\d+)\s*(?:-|a)\s*(\d+)/i);
   if (matchRange) {
     return idade >= parseInt(matchRange[1]) && idade <= parseInt(matchRange[2]);
   }
-  const matchPlus = nomeCategoria.match(/\((\d+)\s*\+\)/);
+  
+  // 2. Busca por idade mínima em vários formatos: "45+", "(45+)", "Acima de 45"
+  const matchPlus = nomeCategoria.match(/(\d+)\s*\+/i) || nomeCategoria.match(/acima\s*(?:de\s*)?(\d+)/i);
   if (matchPlus) {
     return idade >= parseInt(matchPlus[1]);
   }
-  return true; 
+  
+  // 3. Trava de segurança: se a categoria não tiver números no nome, bloqueia.
+  return false; 
 };
 
 export default function App() {
@@ -260,7 +261,6 @@ export default function App() {
     } else if (name === 'whatsapp') {
       setFormAtleta({ ...formAtleta, [name]: formatarTelefone(value) });
     } else if (name === 'dataNascimento') {
-      // --- NOVA LÓGICA: AUTO SELEÇÃO DE CATEGORIA ---
       let categoriaAutomatica = '';
       if (value) {
         const idadeAtleta = calcularIdade(value);
@@ -269,7 +269,7 @@ export default function App() {
         if (categoriaEncontrada) {
           categoriaAutomatica = categoriaEncontrada.nome;
         } else {
-          alert(`Sua idade exata hoje é ${idadeAtleta} anos. Você não se enquadra em nenhuma categoria ativa prevista para este evento.`);
+          alert(`Sua idade (calculada pelo ano de nascimento) é ${idadeAtleta} anos. Você não se enquadra em nenhuma categoria ativa prevista para este evento.`);
         }
       }
       setFormAtleta({ ...formAtleta, dataNascimento: value, categoria: categoriaAutomatica });
@@ -308,14 +308,6 @@ export default function App() {
 
     if (!formAtleta.categoria) {
       return alert("Inscrição bloqueada: A sua idade não se enquadra em nenhuma categoria ativa neste evento.");
-    }
-
-    if (formAtleta.dataNascimento && formAtleta.categoria) {
-      const idadeAtleta = calcularIdade(formAtleta.dataNascimento);
-      const idadeValida = validarIdadeCategoria(idadeAtleta, formAtleta.categoria);
-      if (!idadeValida) {
-        return alert(`Atenção: Sua idade exata hoje é ${idadeAtleta} anos. Esta idade não é permitida para a categoria "${formAtleta.categoria}".`);
-      }
     }
 
     try {
@@ -624,7 +616,7 @@ export default function App() {
                     <div className="flex items-start">
                       <span className="text-xl mr-3 leading-none">⚠️</span>
                       <p className="text-sm text-yellow-800">
-                        <strong>Observação Importante:</strong> A numeração do atleta informada acima pode sofrer alterações por parte da organização até o dia oficial da entrega dos kits.
+                        <strong>Observação Importante:</strong> A numeração do atleta informada acima é provisória e pode sofrer alterações por parte da organização até o dia oficial da entrega dos kits.
                       </p>
                     </div>
                  </div>
@@ -661,7 +653,7 @@ export default function App() {
             {inscricaoSucesso ? (
               <div className="p-8 text-center bg-gray-50 border border-gray-100 m-6 rounded-xl shadow-inner">
                 <h3 className="text-3xl font-bold text-green-600 mb-2">Inscrição Confirmada! 🎉</h3>
-                <p className="text-gray-700 mb-4 text-lg">O seu número de peito oficial é:</p>
+                <p className="text-gray-700 mb-4 text-lg">O seu número de peito provisório é:</p>
                 <span className="text-6xl font-extrabold text-slate-800 block mb-4 tracking-wider">{inscricaoSucesso.numero}</span>
                 
                 <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r-md shadow-sm mb-8 max-w-md mx-auto text-left">
